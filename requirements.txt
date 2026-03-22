@@ -1,6 +1,8 @@
 langgraph
 llama-index
 llama-index-vector-stores-qdrant
+llama-index-embeddings-google-genai
+llama-index-llms-google-genai
 qdrant-client
 langfuse
 fastapi
