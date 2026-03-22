@@ -27,3 +27,21 @@ def route_after_rag(state: AgentState) -> str:
     if state.get("needs_escalation", False):
         return "escalate"
     return "generate_response"
+
+
+def route_by_quality(state: AgentState) -> str:
+    """Route after quality check based on score, iteration count, and priority.
+
+    Routing rules (evaluated in order):
+        1. priority == "critical" -> always "fail" (escalate)
+        2. quality_score >= 0.7   -> "pass" (send reply)
+        3. iteration_count < 2    -> "retry" (back to rag_search)
+        4. otherwise              -> "fail" (escalate after max retries)
+    """
+    if state.get("priority") == "critical":
+        return "fail"
+    if state.get("quality_score", 0.0) >= 0.7:
+        return "pass"
+    if state.get("iteration_count", 0) < 2:
+        return "retry"
+    return "fail"
