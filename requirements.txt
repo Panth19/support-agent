@@ -1,0 +1,14 @@
+langgraph
+llama-index
+llama-index-vector-stores-qdrant
+qdrant-client
+langfuse
+fastapi
+uvicorn
+streamlit
+langchain-google-genai
+python-dotenv
+pydantic
+pydantic-settings
+httpx
+pytest
