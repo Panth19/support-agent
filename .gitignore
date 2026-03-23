@@ -4,6 +4,7 @@ venv/
 # Python
 __pycache__/
 *.pyc
+*.pyo
 *.egg-info/
 dist/
 build/
@@ -20,12 +21,19 @@ build/
 *.swp
 *.swo
 
+# Claude Code
+.claude/
+
+# Superpowers docs (plans, specs)
+docs/
+
 # Logs
 *.log
+
+# Coverage
+.coverage
+htmlcov/
 
 # Personal docs
 project_2_support_agent.md
 roadmap.md
-
-# Git worktrees
-.worktrees/

@@ -12,9 +12,10 @@ class Settings(BaseSettings):
     QDRANT_URL: str
     QDRANT_API_KEY: str = Field(..., repr=False)
     QDRANT_COLLECTION_NAME: str = "support-agent"
-    LANGFUSE_SECRET_KEY: str = Field(..., repr=False)
-    LANGFUSE_PUBLIC_KEY: str = Field(..., repr=False)
+    LANGFUSE_SECRET_KEY: str | None = Field(default=None, repr=False)
+    LANGFUSE_PUBLIC_KEY: str | None = Field(default=None, repr=False)
     LANGFUSE_BASE_URL: str = "https://cloud.langfuse.com"
+    LANGFUSE_ENABLED: bool = True
 
 
 settings = Settings()
