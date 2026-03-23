@@ -297,3 +297,221 @@ class TestEarlyEscalation:
         # generate and quality_check were NOT mocked — if the graph
         # incorrectly routed through them, this test would fail with
         # a missing API key error.
+
+
+# ---------------------------------------------------------------------------
+# Block 7.1: Retry cycle — recovery on second attempt
+# ---------------------------------------------------------------------------
+
+
+class TestRetryCycleRecovery:
+    """Retry cycle where quality improves on the second attempt."""
+
+    @patch("app.agent.nodes.quality_check.ChatGoogleGenerativeAI")
+    @patch("app.agent.nodes.generate.ChatGoogleGenerativeAI")
+    @patch("app.agent.nodes.rag_search.get_query_engine")
+    @patch("app.agent.nodes.classify.ChatGoogleGenerativeAI")
+    def test_retry_succeeds_on_second_attempt(
+        self, mock_classify, mock_rag, mock_generate, mock_quality
+    ):
+        """First quality check fails (0.4), second passes (0.85) -> send_reply."""
+        _setup_classify_mock(mock_classify, category="question")
+        _setup_rag_mock(mock_rag)
+        _setup_generate_mock(mock_generate)
+
+        # Quality mock returns 0.4 first, then 0.85
+        quality_results = iter([
+            QualityCheckResult(
+                relevance=0.4, completeness=0.4, tone=0.4,
+                groundedness=0.4, overall_score=0.4, reason="Poor first attempt.",
+            ),
+            QualityCheckResult(
+                relevance=0.85, completeness=0.85, tone=0.85,
+                groundedness=0.85, overall_score=0.85, reason="Good second attempt.",
+            ),
+        ])
+        mock_structured = MagicMock()
+        mock_structured.invoke.side_effect = lambda _: next(quality_results)
+        mock_quality.return_value.with_structured_output.return_value = mock_structured
+
+        graph = build_graph()
+        result = graph.invoke(_make_state(ticket_text="Complex question about returns"))
+
+        assert result["needs_escalation"] is False
+        assert result["quality_score"] >= 0.7
+        assert result["iteration_count"] == 2
+        assert "Support Team" in result["draft_response"]
+
+    @patch("app.agent.nodes.quality_check.ChatGoogleGenerativeAI")
+    @patch("app.agent.nodes.generate.ChatGoogleGenerativeAI")
+    @patch("app.agent.nodes.rag_search.get_query_engine")
+    @patch("app.agent.nodes.classify.ChatGoogleGenerativeAI")
+    def test_two_retries_varying_scores_then_escalate(
+        self, mock_classify, mock_rag, mock_generate, mock_quality
+    ):
+        """Quality returns 0.3 then 0.5 (both below 0.7) -> escalate after 2 attempts."""
+        _setup_classify_mock(mock_classify, category="question")
+        _setup_rag_mock(mock_rag)
+        _setup_generate_mock(mock_generate)
+
+        quality_results = iter([
+            QualityCheckResult(
+                relevance=0.3, completeness=0.3, tone=0.3,
+                groundedness=0.3, overall_score=0.3, reason="Bad first attempt.",
+            ),
+            QualityCheckResult(
+                relevance=0.5, completeness=0.5, tone=0.5,
+                groundedness=0.5, overall_score=0.5, reason="Still not good enough.",
+            ),
+        ])
+        mock_structured = MagicMock()
+        mock_structured.invoke.side_effect = lambda _: next(quality_results)
+        mock_quality.return_value.with_structured_output.return_value = mock_structured
+
+        graph = build_graph()
+        result = graph.invoke(_make_state(ticket_text="Obscure question"))
+
+        assert result["needs_escalation"] is True
+        assert result["iteration_count"] == 2
+        assert "ESCALATION PACKAGE" in result["draft_response"]
+        assert mock_structured.invoke.call_count == 2
+
+
+# ---------------------------------------------------------------------------
+# Block 7.1: Clarify -> classify -> complaint full path
+# ---------------------------------------------------------------------------
+
+
+class TestClarifyFullPath:
+    """Clarify flow that re-classifies as complaint and goes through the full path."""
+
+    @patch("app.agent.nodes.quality_check.ChatGoogleGenerativeAI")
+    @patch("app.agent.nodes.generate.ChatGoogleGenerativeAI")
+    @patch("app.agent.nodes.rag_search.get_query_engine")
+    @patch("app.agent.nodes.empathy.ChatGoogleGenerativeAI")
+    @patch("app.agent.nodes.clarify.ChatGoogleGenerativeAI")
+    @patch("app.agent.nodes.classify.ChatGoogleGenerativeAI")
+    def test_clarify_then_complaint_full_path(
+        self, mock_classify, mock_clarify, mock_empathy,
+        mock_rag, mock_generate, mock_quality,
+    ):
+        """unclear -> clarify -> classify(complaint) -> empathy -> rag -> generate -> quality -> send_reply."""
+        # Classify: first "unclear", then "complaint"
+        classify_results = iter([
+            ClassificationResult(
+                category="unclear", priority="low", language="ru", summary="Unclear",
+            ),
+            ClassificationResult(
+                category="complaint", priority="high", language="ru", summary="Delivery complaint",
+            ),
+        ])
+        mock_classify_structured = MagicMock()
+        mock_classify_structured.invoke.side_effect = lambda _: next(classify_results)
+        mock_classify.return_value.with_structured_output.return_value = mock_classify_structured
+
+        # Clarify mock
+        mock_clarify_structured = MagicMock()
+        mock_clarify_structured.invoke.return_value = ClarifyResult(
+            clarifying_question="Could you describe the issue in more detail?",
+        )
+        mock_clarify.return_value.with_structured_output.return_value = mock_clarify_structured
+
+        _setup_empathy_mock(mock_empathy)
+        _setup_rag_mock(mock_rag)
+        _setup_generate_mock(mock_generate, content="We will resolve your issue...")
+        _setup_quality_mock(mock_quality, score=0.8)
+
+        checkpointer = MemorySaver()
+        graph = build_graph(checkpointer=checkpointer)
+        config = {"configurable": {"thread_id": "test-clarify-complaint"}}
+
+        # First invoke — pauses at interrupt
+        graph.invoke(_make_state(ticket_text="Ужас!!!"), config)
+
+        # Resume with clarification
+        result = graph.invoke(
+            Command(resume="Мой заказ не пришёл уже неделю!"),
+            config,
+        )
+
+        assert result["category"] == "complaint"
+        assert result["priority"] == "high"
+        assert result["tone_instructions"] != ""
+        assert result["empathy_preamble"] != ""
+        assert result["quality_score"] >= 0.7
+        assert result["needs_escalation"] is False
+        assert "Support Team" in result["draft_response"]
+
+
+# ---------------------------------------------------------------------------
+# Block 7.1: AR-4 early escalation variants
+# ---------------------------------------------------------------------------
+
+
+class TestEarlyEscalationVariants:
+    """Additional AR-4 escalation scenarios."""
+
+    @patch("app.agent.nodes.quality_check.ChatGoogleGenerativeAI")
+    @patch("app.agent.nodes.generate.ChatGoogleGenerativeAI")
+    @patch("app.agent.nodes.rag_search.get_query_engine")
+    @patch("app.agent.nodes.classify.ChatGoogleGenerativeAI")
+    def test_no_rag_results_escalates(
+        self, mock_classify, mock_rag, mock_generate, mock_quality
+    ):
+        """Empty RAG results -> escalate immediately, generate/quality NOT called."""
+        _setup_classify_mock(mock_classify, category="question")
+        _setup_rag_mock(mock_rag, nodes=[])  # No results
+
+        graph = build_graph()
+        result = graph.invoke(_make_state(ticket_text="What is quantum gravity?"))
+
+        assert result["needs_escalation"] is True
+        assert "ESCALATION PACKAGE" in result["draft_response"]
+
+        # generate and quality_check should NOT have been called
+        mock_generate.return_value.invoke.assert_not_called()
+        mock_quality.return_value.with_structured_output.assert_not_called()
+
+    @patch("app.agent.nodes.rag_search.get_query_engine")
+    @patch("app.agent.nodes.classify.ChatGoogleGenerativeAI")
+    def test_rag_exception_escalates(self, mock_classify, mock_rag):
+        """RAG query raises an exception -> escalation with reason mentioning failure."""
+        _setup_classify_mock(mock_classify, category="question")
+        mock_rag.return_value.query.side_effect = Exception("Connection refused")
+
+        graph = build_graph()
+        result = graph.invoke(_make_state(ticket_text="Some question"))
+
+        assert result["needs_escalation"] is True
+        assert "ESCALATION PACKAGE" in result["draft_response"]
+        assert "RAG search failed" in result["escalation_reason"]
+
+    @patch("app.agent.nodes.quality_check.ChatGoogleGenerativeAI")
+    @patch("app.agent.nodes.generate.ChatGoogleGenerativeAI")
+    @patch("app.agent.nodes.rag_search.get_query_engine")
+    @patch("app.agent.nodes.empathy.ChatGoogleGenerativeAI")
+    @patch("app.agent.nodes.classify.ChatGoogleGenerativeAI")
+    def test_complaint_with_low_rag_escalates(
+        self, mock_classify, mock_empathy, mock_rag, mock_generate, mock_quality
+    ):
+        """Complaint -> empathy runs -> low RAG score -> AR-4 escalation."""
+        _setup_classify_mock(mock_classify, category="complaint", priority="high")
+        _setup_empathy_mock(mock_empathy)
+        _setup_rag_mock(mock_rag, nodes=[_mock_source_node(score=0.15)])
+
+        graph = build_graph()
+        result = graph.invoke(
+            _make_state(ticket_text="My order is completely wrong!")
+        )
+
+        # Empathy node ran (set tone fields)
+        assert result["tone_instructions"] != ""
+        assert result["empathy_preamble"] != ""
+
+        # But escalated via AR-4 path
+        assert result["needs_escalation"] is True
+        assert "ESCALATION PACKAGE" in result["draft_response"]
+
+        # generate and quality_check should NOT have been called
+        mock_generate.return_value.invoke.assert_not_called()
+        mock_quality.return_value.with_structured_output.assert_not_called()

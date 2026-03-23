@@ -11,6 +11,8 @@ Covers:
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from app.agent.nodes.escalate import escalate_node
 from app.agent.nodes.quality_check import QualityCheckResult, quality_check_node
 from app.agent.nodes.send_reply import send_reply_node
@@ -107,6 +109,58 @@ class TestRouteByQuality:
 
 
 # ---------------------------------------------------------------------------
+# route_by_quality — exhaustive priority x score x iteration matrix (Block 7.1)
+# ---------------------------------------------------------------------------
+
+
+class TestRouteByQualityMatrix:
+    """Parametrized test covering all priority x score x iteration combinations."""
+
+    @pytest.mark.parametrize(
+        "priority, quality_score, iteration_count, expected",
+        [
+            # Critical always fails regardless of score or iteration
+            ("critical", 1.0, 0, "fail"),
+            ("critical", 0.7, 1, "fail"),
+            ("critical", 0.0, 2, "fail"),
+            ("critical", 0.5, 0, "fail"),
+            # High priority follows normal logic
+            ("high", 0.9, 1, "pass"),
+            ("high", 0.7, 0, "pass"),
+            ("high", 0.5, 1, "retry"),
+            ("high", 0.5, 2, "fail"),
+            ("high", 0.0, 0, "retry"),
+            ("high", 0.0, 2, "fail"),
+            # Medium priority follows normal logic
+            ("medium", 0.85, 1, "pass"),
+            ("medium", 0.7, 2, "pass"),
+            ("medium", 0.69, 0, "retry"),
+            ("medium", 0.69, 1, "retry"),
+            ("medium", 0.69, 2, "fail"),
+            ("medium", 0.0, 1, "retry"),
+            # Low priority — normal logic + fine boundaries
+            ("low", 1.0, 1, "pass"),
+            ("low", 0.7, 0, "pass"),
+            ("low", 0.71, 1, "pass"),
+            ("low", 0.69, 0, "retry"),
+            ("low", 0.69, 1, "retry"),
+            ("low", 0.5, 2, "fail"),
+            ("low", 0.0, 0, "retry"),
+            ("low", 0.0, 2, "fail"),
+        ],
+    )
+    def test_priority_score_iteration_matrix(
+        self, priority, quality_score, iteration_count, expected
+    ):
+        state = _make_state(
+            priority=priority,
+            quality_score=quality_score,
+            iteration_count=iteration_count,
+        )
+        assert route_by_quality(state) == expected
+
+
+# ---------------------------------------------------------------------------
 # route_by_category — pure logic tests
 # ---------------------------------------------------------------------------
 
@@ -120,6 +174,10 @@ class TestRouteByCategory:
 
     def test_unclear(self):
         assert route_by_category({"category": "unclear"}) == "unclear"
+
+    def test_unknown_category_passes_through(self):
+        """route_by_category is a pure pass-through; unknown values should not raise."""
+        assert route_by_category({"category": "refund"}) == "refund"
 
 
 # ---------------------------------------------------------------------------

@@ -96,6 +96,78 @@ class TestClassifyNodeUnit:
         result = classify_node(self._make_state())
         assert "summary" not in result
 
+    # --- Edge-case tests (Block 7.1) ---
+
+    @patch("app.agent.nodes.classify.ChatGoogleGenerativeAI")
+    def test_empty_ticket_text(self, mock_llm_cls):
+        """Empty ticket text should still produce a well-formed result."""
+        self._mock_llm(
+            mock_llm_cls,
+            ClassificationResult(
+                category="unclear",
+                priority="low",
+                language="en",
+                summary="Empty input",
+            ),
+        )
+        result = classify_node(self._make_state(""))
+        assert set(result.keys()) == {"category", "priority", "language"}
+        assert result["category"] == "unclear"
+
+    @patch("app.agent.nodes.classify.ChatGoogleGenerativeAI")
+    def test_very_long_ticket_text(self, mock_llm_cls):
+        """10 000-char input should not crash and full text must reach the LLM."""
+        self._mock_llm(
+            mock_llm_cls,
+            ClassificationResult(
+                category="question",
+                priority="medium",
+                language="en",
+                summary="Long text",
+            ),
+        )
+        long_text = "A" * 10_000
+        result = classify_node(self._make_state(long_text))
+        assert set(result.keys()) == {"category", "priority", "language"}
+
+        # Verify the full text was sent to the LLM
+        call_args = mock_llm_cls.return_value.with_structured_output.return_value.invoke.call_args[0][0]
+        human_msg = call_args[-1][1]
+        assert long_text in human_msg
+
+    @patch("app.agent.nodes.classify.ChatGoogleGenerativeAI")
+    def test_special_characters_ticket(self, mock_llm_cls):
+        """Emojis, HTML tags, null bytes, newlines should not crash the node."""
+        self._mock_llm(
+            mock_llm_cls,
+            ClassificationResult(
+                category="unclear",
+                priority="low",
+                language="en",
+                summary="Special chars",
+            ),
+        )
+        weird_text = "<script>alert('xss')</script>\n\x00\U0001f4a9"
+        result = classify_node(self._make_state(weird_text))
+        assert set(result.keys()) == {"category", "priority", "language"}
+
+    @patch("app.agent.nodes.classify.ChatGoogleGenerativeAI")
+    def test_multilingual_mixed_input(self, mock_llm_cls):
+        """Mixed-language input should detect the dominant language."""
+        self._mock_llm(
+            mock_llm_cls,
+            ClassificationResult(
+                category="question",
+                priority="low",
+                language="fr",
+                summary="Mixed language ticket",
+            ),
+        )
+        result = classify_node(
+            self._make_state("Bonjour, I need help avec mon commande")
+        )
+        assert result["language"] == "fr"
+
 
 # ---------------------------------------------------------------------------
 # Routing tests — pure logic, no mocks needed
@@ -172,3 +244,44 @@ class TestClassifyNodeIntegration:
         }
         result = classify_node(state)
         assert result["language"] == "en"
+
+    # --- Edge-case integration tests (Block 7.1) ---
+
+    def test_empty_text_classified_as_unclear(self):
+        """Real Gemini should classify an empty string as 'unclear'."""
+        state = {"ticket_text": "", "messages": []}
+        result = classify_node(state)
+        assert result["category"] == "unclear"
+
+    def test_long_text_does_not_error(self):
+        """Real Gemini should handle a 5 000-char input without errors."""
+        state = {
+            "ticket_text": "Я хочу вернуть товар. " * 250,  # ~5500 chars
+            "messages": [],
+        }
+        result = classify_node(state)
+        assert set(result.keys()) == {"category", "priority", "language"}
+
+    def test_mixed_language_detects_dominant(self):
+        """Mixed Russian/English text should detect one of the two languages."""
+        state = {
+            "ticket_text": (
+                "Привет, I ordered a product but оно не пришло. "
+                "Когда будет delivery?"
+            ),
+            "messages": [],
+        }
+        result = classify_node(state)
+        assert result["language"] in ("ru", "en")
+
+    def test_german_ticket_detected(self):
+        """German complaint text should be detected as 'de'."""
+        state = {
+            "ticket_text": (
+                "Ich bin sehr enttäuscht! Meine Bestellung ist seit "
+                "einer Woche nicht angekommen. Ich fordere eine Rückerstattung!"
+            ),
+            "messages": [],
+        }
+        result = classify_node(state)
+        assert result["language"] == "de"

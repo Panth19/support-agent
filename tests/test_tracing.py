@@ -3,6 +3,7 @@
 import logging
 from unittest.mock import MagicMock, patch
 
+import app.tracing.langfuse_setup as _lf_mod
 import pytest
 
 from app.tracing.langfuse_setup import (
@@ -14,6 +15,14 @@ from app.tracing.langfuse_setup import (
 from app.tracing.metrics import get_trace_by_id, get_aggregate_metrics
 
 
+@pytest.fixture(autouse=True)
+def _reset_langfuse_singleton():
+    """Reset the module-level singleton before each test to avoid leaks."""
+    _lf_mod._langfuse_client = None
+    yield
+    _lf_mod._langfuse_client = None
+
+
 # ---------------------------------------------------------------------------
 # get_langfuse_handler
 # ---------------------------------------------------------------------------
@@ -22,9 +31,10 @@ from app.tracing.metrics import get_trace_by_id, get_aggregate_metrics
 class TestGetLangfuseHandler:
     """Tests for get_langfuse_handler factory."""
 
+    @patch("app.tracing.langfuse_setup.Langfuse")
     @patch("app.tracing.langfuse_setup.CallbackHandler")
     @patch("app.tracing.langfuse_setup.settings")
-    def test_returns_handler_when_enabled(self, mock_settings, mock_cb_cls):
+    def test_returns_handler_when_enabled(self, mock_settings, mock_cb_cls, mock_lf_cls):
         mock_settings.LANGFUSE_ENABLED = True
         mock_settings.LANGFUSE_PUBLIC_KEY = "pk-test"
 
@@ -39,9 +49,10 @@ class TestGetLangfuseHandler:
         handler = get_langfuse_handler()
         assert handler is None
 
+    @patch("app.tracing.langfuse_setup.Langfuse")
     @patch("app.tracing.langfuse_setup.CallbackHandler")
     @patch("app.tracing.langfuse_setup.settings")
-    def test_returns_none_on_connection_error(self, mock_settings, mock_cb_cls):
+    def test_returns_none_on_connection_error(self, mock_settings, mock_cb_cls, mock_lf_cls):
         mock_settings.LANGFUSE_ENABLED = True
         mock_settings.LANGFUSE_PUBLIC_KEY = "pk-test"
         mock_cb_cls.side_effect = Exception("Connection refused")
@@ -83,6 +94,7 @@ class TestGetLangfuseClient:
     @patch("app.tracing.langfuse_setup.Langfuse")
     @patch("app.tracing.langfuse_setup.settings")
     def test_returns_client_with_correct_params(self, mock_settings, mock_lf_cls):
+        mock_settings.LANGFUSE_ENABLED = True
         mock_settings.LANGFUSE_PUBLIC_KEY = "pk-test"
         mock_settings.LANGFUSE_SECRET_KEY = "sk-test"
         mock_settings.LANGFUSE_BASE_URL = "http://localhost:3000"
@@ -91,7 +103,7 @@ class TestGetLangfuseClient:
         mock_lf_cls.assert_called_once_with(
             public_key="pk-test",
             secret_key="sk-test",
-            base_url="http://localhost:3000",
+            host="http://localhost:3000",
         )
         assert client is not None
 
@@ -104,7 +116,13 @@ class TestGetLangfuseClient:
 class TestRecordTraceScores:
     """Tests for record_trace_scores."""
 
-    def test_records_scores_and_flushes(self):
+    @patch("app.tracing.langfuse_setup.Langfuse")
+    @patch("app.tracing.langfuse_setup.settings")
+    def test_records_scores_and_flushes(self, mock_settings, mock_lf_cls):
+        mock_settings.LANGFUSE_ENABLED = True
+        mock_client = MagicMock()
+        mock_lf_cls.return_value = mock_client
+
         mock_handler = MagicMock()
         mock_handler.last_trace_id = "trace-123"
 
@@ -116,29 +134,34 @@ class TestRecordTraceScores:
             priority="low",
         )
 
-        client = mock_handler._langfuse_client
         # Should create one score per domain field
-        assert client.create_score.call_count == 4
+        assert mock_client.create_score.call_count == 4
         # Verify one of the calls
-        calls = {c[1]["name"]: c[1] for c in client.create_score.call_args_list}
+        calls = {c[1]["name"]: c[1] for c in mock_client.create_score.call_args_list}
         assert calls["category"]["value"] == "question"
         assert calls["category"]["trace_id"] == "trace-123"
         assert calls["quality_score"]["value"] == 0.85
         assert calls["escalated"]["value"] == "False"
         # Should flush after all scores
-        client.flush.assert_called_once()
+        mock_client.flush.assert_called_once()
 
     def test_noop_when_handler_is_none(self):
         # Should not raise
         record_trace_scores(None, category="question")
 
-    def test_noop_when_no_trace_id(self):
+    @patch("app.tracing.langfuse_setup.Langfuse")
+    @patch("app.tracing.langfuse_setup.settings")
+    def test_noop_when_no_trace_id(self, mock_settings, mock_lf_cls):
+        mock_settings.LANGFUSE_ENABLED = True
+        mock_client = MagicMock()
+        mock_lf_cls.return_value = mock_client
+
         mock_handler = MagicMock()
         mock_handler.last_trace_id = None
 
         # Should not raise, should not create scores
         record_trace_scores(mock_handler, category="question")
-        mock_handler._langfuse_client.create_score.assert_not_called()
+        mock_client.create_score.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
