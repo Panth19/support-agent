@@ -26,3 +26,6 @@ build/
 # Personal docs
 project_2_support_agent.md
 roadmap.md
+
+# Git worktrees
+.worktrees/
