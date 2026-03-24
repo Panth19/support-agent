@@ -46,7 +46,7 @@ graph TD
     empathy --> rag_search
 
     rag_search --> route_after_rag{Route after RAG}
-    route_after_rag -->|low similarity / no results| escalate
+    route_after_rag -->|low relevance / no results| escalate
     route_after_rag -->|results found| generate_response
 
     generate_response --> quality_check
@@ -112,7 +112,7 @@ The `empathy` node only sets `tone_instructions` and `empathy_preamble` in state
 
 ### AR-2: Model Split
 
-- **Gemini 2.5 Flash** — for `classify` and `quality_check` (cheaper, structured output)
+- **Gemini 2.5 Flash** — for `classify`, `quality_check`, LLM reranking, and relevance verification (cheaper, structured output)
 - **Gemini 3.0 Flash** — for `generate` and `empathy` (better quality for customer-facing text)
 
 This optimizes cost without sacrificing response quality where it matters.
@@ -123,7 +123,13 @@ Streamlit communicates with FastAPI via REST (`httpx`), not direct imports. This
 
 ### AR-4: Early Escalation
 
-If RAG returns `similarity_score < 0.3` or no results, the agent escalates immediately — skipping `generate` and `quality_check`. This prevents hallucinated responses when the knowledge base lacks relevant information.
+The RAG pipeline uses a three-layer quality gate to decide whether the knowledge base can answer the question:
+
+1. **SimilarityPostprocessor** — fast cosine similarity filter (cutoff 0.5), removes obviously irrelevant chunks
+2. **LLMRerank** — Gemini 2.5 Flash re-scores each chunk on a 1-10 scale; if the best score < 3.0, the agent escalates
+3. **LLM Relevance Verification** — a separate LLM call checks whether the retrieved context contains a *direct, specific* answer (not just related information)
+
+If any layer fails, the agent escalates immediately — skipping `generate` and `quality_check`. This prevents hallucinated responses when the knowledge base lacks relevant information.
 
 ---
 
@@ -376,7 +382,7 @@ support_agent/
 │   │   ├── qdrant_store.py       # Qdrant client + vector store factory
 │   │   ├── indexer.py            # Knowledge base indexing pipeline
 │   │   ├── llm_settings.py       # LlamaIndex LLM/embedding config
-│   │   └── query_engine.py       # Query engine (top_k=5, compact mode)
+│   │   └── query_engine.py       # Query engine (top_k=10, LLMRerank, no_text mode)
 │   └── tracing/
 │       ├── langfuse_setup.py     # Langfuse handler + trace context
 │       └── metrics.py            # Aggregate metrics + trace retrieval
