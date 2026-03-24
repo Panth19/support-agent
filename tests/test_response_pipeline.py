@@ -54,13 +54,14 @@ def _make_state(**overrides) -> dict:
 class TestRagSearchNode:
     """Unit tests for rag_search_node with mocked query engine."""
 
+    @patch("app.agent.nodes.rag_search._verify_relevance", return_value=True)
     @patch("app.agent.nodes.rag_search.get_query_engine")
-    def test_normal_retrieval(self, mock_get_qe):
+    def test_normal_retrieval(self, mock_get_qe, _mock_relevance):
         mock_response = MagicMock()
         mock_response.source_nodes = [
-            _make_source_node("Return policy info", 0.9, {"file": "faq.md"}),
-            _make_source_node("Delivery terms", 0.7),
-            _make_source_node("Contact info", 0.5),
+            _make_source_node("Return policy info", 9.0, {"file": "faq.md"}),
+            _make_source_node("Delivery terms", 7.0),
+            _make_source_node("Contact info", 5.0),
         ]
         mock_get_qe.return_value.query.return_value = mock_response
 
@@ -69,7 +70,7 @@ class TestRagSearchNode:
         assert len(result["retrieved_contexts"]) == 3
         assert result["retrieved_contexts"][0] == "Return policy info"
         assert len(result["sources"]) == 3
-        assert result["sources"][0]["score"] == 0.9
+        assert result["sources"][0]["score"] == 9.0
         assert result["sources"][0]["metadata"] == {"file": "faq.md"}
         assert result["needs_escalation"] is False
         assert result["escalation_reason"] == ""
@@ -79,15 +80,15 @@ class TestRagSearchNode:
     def test_escalation_on_low_score(self, mock_get_qe):
         mock_response = MagicMock()
         mock_response.source_nodes = [
-            _make_source_node("Irrelevant chunk", 0.2),
-            _make_source_node("Another irrelevant", 0.1),
+            _make_source_node("Irrelevant chunk", 2.0),
+            _make_source_node("Another irrelevant", 1.0),
         ]
         mock_get_qe.return_value.query.return_value = mock_response
 
         result = rag_search_node(_make_state())
 
         assert result["needs_escalation"] is True
-        assert "0.20" in result["escalation_reason"]
+        assert "2.00" in result["escalation_reason"]
         assert result["retrieved_contexts"] == []
 
     @patch("app.agent.nodes.rag_search.get_query_engine")
@@ -101,10 +102,11 @@ class TestRagSearchNode:
         assert result["needs_escalation"] is True
         assert "No knowledge base results" in result["escalation_reason"]
 
+    @patch("app.agent.nodes.rag_search._verify_relevance", return_value=True)
     @patch("app.agent.nodes.rag_search.get_query_engine")
-    def test_iteration_count_increments(self, mock_get_qe):
+    def test_iteration_count_increments(self, mock_get_qe, _mock_relevance):
         mock_response = MagicMock()
-        mock_response.source_nodes = [_make_source_node("text", 0.8)]
+        mock_response.source_nodes = [_make_source_node("text", 8.0)]
         mock_get_qe.return_value.query.return_value = mock_response
 
         result = rag_search_node(_make_state(iteration_count=1))
@@ -121,6 +123,25 @@ class TestRagSearchNode:
         assert "RAG search failed" in result["escalation_reason"]
         assert "Qdrant unavailable" in result["escalation_reason"]
         assert result["iteration_count"] == 1
+
+    @patch("app.agent.nodes.rag_search._verify_relevance", return_value=False)
+    @patch("app.agent.nodes.rag_search.get_query_engine")
+    def test_escalation_on_irrelevant_context(self, mock_get_qe, _mock_relevance):
+        """High scores but LLM says context doesn't directly answer the question."""
+        mock_response = MagicMock()
+        mock_response.source_nodes = [
+            _make_source_node("Corporate orders info", 9.0),
+            _make_source_node("Invoicing details", 7.0),
+        ]
+        mock_get_qe.return_value.query.return_value = mock_response
+
+        result = rag_search_node(_make_state(
+            ticket_text="How do I change my bank account for billing?",
+        ))
+
+        assert result["needs_escalation"] is True
+        assert "does not contain a direct answer" in result["escalation_reason"]
+        assert result["retrieved_contexts"] == []
 
     @patch("app.agent.nodes.rag_search.get_query_engine")
     def test_handles_none_scores(self, mock_get_qe):
