@@ -1,9 +1,10 @@
 """FastAPI application — HTTP layer for the AI Support Agent.
 
-Provides 4 endpoints:
-- POST /ticket        — submit a support ticket, get agent response
-- POST /ticket/{id}/clarify — resume interrupted graph with user's clarification
-- GET  /ticket/{id}/trace   — fetch Langfuse trace for a ticket
+Provides 5 endpoints:
+- GET  /health               — liveness / readiness probe
+- POST /ticket               — submit a support ticket, get agent response
+- POST /ticket/{id}/clarify  — resume interrupted graph with user's clarification
+- GET  /ticket/{id}/trace    — fetch Langfuse trace for a ticket
 - GET  /metrics              — aggregated metrics from Langfuse
 """
 
@@ -109,6 +110,16 @@ async def global_exception_handler(request: Request, exc: Exception):
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
+
+
+@app.get("/health")
+def health_check():
+    """Liveness / readiness probe — confirms the API and graph are ready."""
+    graph = getattr(app.state, "agent", None)
+    return {
+        "status": "ok",
+        "graph_ready": graph is not None,
+    }
 
 
 @app.post("/ticket", response_model=TicketResponse)

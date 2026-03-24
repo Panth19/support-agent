@@ -8,9 +8,13 @@ as Langfuse scores and available per-trace via get_trace_by_id().
 import logging
 from datetime import datetime
 
+from langfuse.api.core.request_options import RequestOptions
+
 from app.tracing.langfuse_setup import get_langfuse_client
 
 logger = logging.getLogger(__name__)
+
+_REQ_OPTS = RequestOptions(timeout_in_seconds=15)
 
 
 def get_trace_by_id(trace_id: str) -> dict | None:
@@ -20,7 +24,7 @@ def get_trace_by_id(trace_id: str) -> dict | None:
     """
     try:
         client = get_langfuse_client()
-        trace = client.api.trace.get(trace_id)
+        trace = client.api.trace.get(trace_id, request_options=_REQ_OPTS)
 
         observations = []
         for obs in getattr(trace, "observations", []) or []:
@@ -76,7 +80,7 @@ def get_aggregate_metrics(
             list_kwargs["from_timestamp"] = from_timestamp
         if to_timestamp:
             list_kwargs["to_timestamp"] = to_timestamp
-        response = client.api.trace.list(**list_kwargs)
+        response = client.api.trace.list(**list_kwargs, request_options=_REQ_OPTS)
         traces = response.data
     except Exception as exc:
         logger.warning("Failed to fetch traces for metrics", exc_info=True)
@@ -96,7 +100,7 @@ def get_aggregate_metrics(
             score_kwargs["from_timestamp"] = from_timestamp
         if to_timestamp:
             score_kwargs["to_timestamp"] = to_timestamp
-        scores_resp = client.api.score.list(**score_kwargs)
+        scores_resp = client.api.scores.get_many(**score_kwargs, request_options=_REQ_OPTS)
         escalation_scores = scores_resp.data or []
         escalated_count = sum(
             1 for s in escalation_scores
@@ -120,7 +124,7 @@ def get_aggregate_metrics(
             cat_kwargs["from_timestamp"] = from_timestamp
         if to_timestamp:
             cat_kwargs["to_timestamp"] = to_timestamp
-        cat_resp = client.api.score.list(**cat_kwargs)
+        cat_resp = client.api.scores.get_many(**cat_kwargs, request_options=_REQ_OPTS)
         for s in cat_resp.data or []:
             val = str(getattr(s, "string_value", None) or getattr(s, "value", "unknown"))
             category_distribution[val] = category_distribution.get(val, 0) + 1
