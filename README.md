@@ -1,8 +1,15 @@
 # AI Support Agent
 
-An autonomous AI agent that processes customer support tickets — classifies them, retrieves knowledge base context via RAG, generates responses, and escalates to a human operator when necessary.
+![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)
+![LangGraph](https://img.shields.io/badge/LangGraph-orchestration-blue)
+![LlamaIndex](https://img.shields.io/badge/LlamaIndex-RAG-purple)
+![Qdrant](https://img.shields.io/badge/Qdrant-vector_DB-red)
+![Langfuse](https://img.shields.io/badge/Langfuse-tracing-orange)
+![FastAPI](https://img.shields.io/badge/FastAPI-API-009688?logo=fastapi&logoColor=white)
+![Streamlit](https://img.shields.io/badge/Streamlit-UI-FF4B4B?logo=streamlit&logoColor=white)
+![Google Gemini](https://img.shields.io/badge/Google_Gemini-LLM-4285F4?logo=google&logoColor=white)
 
-Built with **LangGraph** (orchestration), **LlamaIndex** (RAG), **Qdrant** (vector DB), **Langfuse** (tracing), **FastAPI** (API), **Streamlit** (UI), and **Google Gemini** (LLM).
+An autonomous AI agent that processes customer support tickets — classifies them, retrieves knowledge base context via RAG, generates responses, and escalates to a human operator when necessary.
 
 ![Streamlit UI](assets/streamlit-ui.png)
 ![Langfuse Dashboard](assets/langfuse-dashboard.png)
