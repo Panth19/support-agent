@@ -84,26 +84,70 @@ def get_trace_by_id(trace_id: str) -> dict | None:
     """
     try:
         client = get_langfuse_client()
-        trace = client.api.trace.get(trace_id, request_options=_REQ_OPTS)
+        if client is None:
+            return None
 
-        observations = []
-        for obs in getattr(trace, "observations", []) or []:
-            observations.append({
-                "name": obs.name,
-                "latency_ms": obs.latency,
-                "model": getattr(obs, "model", None),
-                "cost": getattr(obs, "total_cost", None),
-            })
+        # --- Langfuse v3/v4 path ---
+        trace_api = getattr(client.api, "trace", None)
+        get_method = getattr(trace_api, "get", None) if trace_api is not None else None
+        if callable(get_method):
+            trace = get_method(trace_id, request_options=_REQ_OPTS)
+            observations = []
+            for obs in getattr(trace, "observations", []) or []:
+                observations.append({
+                    "name": obs.name,
+                    "latency_ms": obs.latency,
+                    "model": getattr(obs, "model", None),
+                    "cost": getattr(obs, "total_cost", None),
+                })
+            return {
+                "trace_id": trace.id,
+                "name": trace.name,
+                "duration_ms": trace.latency,
+                "total_cost": trace.total_cost,
+                "observations": observations,
+                "metadata": trace.metadata or {},
+                "scores": getattr(trace, "scores", []) or [],
+            }
 
-        return {
-            "trace_id": trace.id,
-            "name": trace.name,
-            "duration_ms": trace.latency,
-            "total_cost": trace.total_cost,
-            "observations": observations,
-            "metadata": trace.metadata or {},
-            "scores": getattr(trace, "scores", []) or [],
-        }
+        # --- Langfuse v5 path (derive trace from observations) ---
+        obs_api = getattr(client.api, "observations", None)
+        get_many = getattr(obs_api, "get_many", None) if obs_api is not None else None
+        if callable(get_many):
+            response = get_many(trace_id=trace_id, limit=200, request_options=_REQ_OPTS)
+            obs_list = getattr(response, "data", None) or []
+            if not obs_list:
+                return None
+            observations = []
+            total_cost = 0.0
+            max_latency = 0.0
+            for obs in obs_list:
+                latency = getattr(obs, "latency", None) or getattr(obs, "calculated_latency", None) or 0
+                cost = None
+                for attr in ("total_cost", "calculated_total_cost", "cost"):
+                    cost = getattr(obs, attr, None)
+                    if cost is not None:
+                        break
+                cost = cost or 0
+                total_cost += cost
+                max_latency = max(max_latency, latency or 0)
+                observations.append({
+                    "name": getattr(obs, "name", None) or getattr(obs, "type", None) or "span",
+                    "latency_ms": latency,
+                    "model": getattr(obs, "model", None),
+                    "cost": cost,
+                })
+            return {
+                "trace_id": trace_id,
+                "name": "support-ticket",
+                "duration_ms": max_latency,
+                "total_cost": total_cost,
+                "observations": observations,
+                "metadata": {},
+                "scores": [],
+            }
+
+        return None
     except Exception:
         logger.warning("Failed to fetch trace %s", trace_id, exc_info=True)
         return None
