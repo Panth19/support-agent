@@ -61,7 +61,7 @@ def generate_response_node(state: AgentState) -> dict:
     )
 
     llm = ChatGoogleGenerativeAI(
-        model="gemini-flash-latest",
+        model=settings.GEMINI_MODEL,
         google_api_key=settings.GEMINI_API_KEY,
         temperature=0.3,
     )

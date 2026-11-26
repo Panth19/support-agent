@@ -17,6 +17,66 @@ logger = logging.getLogger(__name__)
 _REQ_OPTS = RequestOptions(timeout_in_seconds=15)
 
 
+def _list_trace_records(client, list_kwargs: dict) -> list:
+    """Return a list of normalized trace records across Langfuse SDK versions.
+
+    v3/v4 expose ``client.api.trace.list``. v5 removed it and traces must be
+    derived from ``client.api.observations.get_many``.
+    """
+    # --- Langfuse v3/v4 path ---
+    trace_api = getattr(client.api, "trace", None)
+    if trace_api is not None:
+        for method_name in ("list", "list_traces"):
+            method = getattr(trace_api, method_name, None)
+            if callable(method):
+                response = method(**list_kwargs, request_options=_REQ_OPTS)
+                return [_normalize_record(t) for t in (getattr(response, "data", None) or [])]
+
+    # --- Langfuse v5 path (observations) ---
+    obs_api = getattr(client.api, "observations", None)
+    if obs_api is not None:
+        method = getattr(obs_api, "get_many", None)
+        if callable(method):
+            obs_kwargs = {"limit": list_kwargs.get("limit", 100)}
+            if list_kwargs.get("from_timestamp"):
+                obs_kwargs["from_start_time"] = list_kwargs["from_timestamp"]
+            if list_kwargs.get("to_timestamp"):
+                obs_kwargs["to_start_time"] = list_kwargs["to_timestamp"]
+            response = method(**obs_kwargs, request_options=_REQ_OPTS)
+            return [_normalize_record(o) for o in (getattr(response, "data", None) or [])]
+
+    raise AttributeError("No supported trace listing method found in Langfuse SDK")
+
+
+def _normalize_record(obj) -> dict:
+    """Extract latency/cost from a trace (v4) or observation (v5) object."""
+    latency = getattr(obj, "latency", None)
+    if latency is None:
+        latency = getattr(obj, "calculated_latency", None) or 0
+    cost = None
+    for attr in ("total_cost", "calculated_total_cost", "cost"):
+        cost = getattr(obj, attr, None)
+        if cost is not None:
+            break
+    return {"latency": latency or 0, "cost": cost or 0}
+
+
+def _scores_data(response) -> list:
+    """Extract the list of score objects from a scores response (v3/v4/v5)."""
+    return getattr(response, "data", None) or []
+
+
+def _fetch_scores(client, score_kwargs: dict):
+    """Fetch scores across Langfuse SDK versions (v3/v4/v5)."""
+    scores_api = getattr(client.api, "scores", None)
+    if scores_api is not None:
+        for method_name in ("get_many", "list", "list_scores"):
+            method = getattr(scores_api, method_name, None)
+            if callable(method):
+                return method(**score_kwargs, request_options=_REQ_OPTS)
+    raise AttributeError("No supported scores listing method found in Langfuse SDK")
+
+
 def get_trace_by_id(trace_id: str) -> dict | None:
     """Fetch a single trace by ID and return a structured dict.
 
@@ -75,23 +135,24 @@ def get_aggregate_metrics(
 
     try:
         client = get_langfuse_client()
+        if client is None:
+            return {**empty, "error": "Langfuse disabled or unavailable"}
         list_kwargs: dict = {"limit": limit}
         if from_timestamp:
             list_kwargs["from_timestamp"] = from_timestamp
         if to_timestamp:
             list_kwargs["to_timestamp"] = to_timestamp
-        response = client.api.trace.list(**list_kwargs, request_options=_REQ_OPTS)
-        traces = response.data
+        records = _list_trace_records(client, list_kwargs)
     except Exception as exc:
         logger.warning("Failed to fetch traces for metrics", exc_info=True)
         return {**empty, "error": str(exc)}
 
-    if not traces:
+    if not records:
         return empty
 
-    total = len(traces)
-    total_latency = sum(t.latency or 0 for t in traces)
-    total_cost = sum(t.total_cost or 0 for t in traces)
+    total = len(records)
+    total_latency = sum(r.get("latency") or 0 for r in records)
+    total_cost = sum(r.get("cost") or 0 for r in records)
 
     # Escalation rate
     try:
@@ -100,8 +161,7 @@ def get_aggregate_metrics(
             score_kwargs["from_timestamp"] = from_timestamp
         if to_timestamp:
             score_kwargs["to_timestamp"] = to_timestamp
-        scores_resp = client.api.scores.get_many(**score_kwargs, request_options=_REQ_OPTS)
-        escalation_scores = scores_resp.data or []
+        escalation_scores = _scores_data(_fetch_scores(client, score_kwargs))
         escalated_count = sum(
             1 for s in escalation_scores
             if str(getattr(s, "value", "")).lower() == "true"
@@ -124,8 +184,7 @@ def get_aggregate_metrics(
             cat_kwargs["from_timestamp"] = from_timestamp
         if to_timestamp:
             cat_kwargs["to_timestamp"] = to_timestamp
-        cat_resp = client.api.scores.get_many(**cat_kwargs, request_options=_REQ_OPTS)
-        for s in cat_resp.data or []:
+        for s in _scores_data(_fetch_scores(client, cat_kwargs)):
             val = str(getattr(s, "string_value", None) or getattr(s, "value", "unknown"))
             category_distribution[val] = category_distribution.get(val, 0) + 1
     except Exception:

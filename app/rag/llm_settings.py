@@ -12,10 +12,10 @@ def configure_llama_index() -> None:
     Safe to call multiple times (idempotent).
     """
     Settings.embed_model = GoogleGenAIEmbedding(
-        model_name="gemini-embedding-2-preview",
+        model_name=app_settings.GEMINI_EMBEDDING_MODEL,
         api_key=app_settings.GEMINI_API_KEY,
     )
     Settings.llm = GoogleGenAI(
-        model="gemini-2.5-flash",
+        model=app_settings.GEMINI_MODEL,
         api_key=app_settings.GEMINI_API_KEY,
     )

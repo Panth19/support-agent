@@ -58,7 +58,7 @@ def empathy_node(state: AgentState) -> dict:
         dict with keys: tone_instructions, empathy_preamble.
     """
     llm = ChatGoogleGenerativeAI(
-        model="gemini-flash-latest",
+        model=settings.GEMINI_MODEL,
         google_api_key=settings.GEMINI_API_KEY,
         temperature=0.4,
     )

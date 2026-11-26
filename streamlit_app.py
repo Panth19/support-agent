@@ -18,7 +18,7 @@ import httpx
 import pandas as pd
 import streamlit as st
 
-API_BASE_URL_DEFAULT = "http://localhost:8000"
+API_BASE_URL_DEFAULT = "https://support-agent-backend-b72l.onrender.com"
 
 # ---------------------------------------------------------------------------
 # Section 1: Session state
