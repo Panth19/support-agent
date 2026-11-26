@@ -140,7 +140,7 @@ def create_ticket(request: TicketRequest):
             result = graph.invoke({"ticket_text": request.text}, config)
     except Exception as exc:
         logger.error("Graph invocation failed: %s", exc, exc_info=True)
-        raise HTTPException(status_code=500, detail="Failed to process ticket")
+        raise HTTPException(status_code=500, detail=f"Failed to process ticket: {exc}")
 
     trace_id = getattr(handler, "last_trace_id", None) if handler else None
 
@@ -214,7 +214,7 @@ def clarify_ticket(ticket_id: str, request: ClarifyRequest):
             result = graph.invoke(Command(resume=request.reply), config)
     except Exception as exc:
         logger.error("Clarify invocation failed: %s", exc, exc_info=True)
-        raise HTTPException(status_code=500, detail="Failed to process ticket")
+        raise HTTPException(status_code=500, detail=f"Failed to process ticket: {exc}")
 
     trace_id = getattr(handler, "last_trace_id", None) if handler else None
 
