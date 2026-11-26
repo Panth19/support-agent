@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     )
 
     GEMINI_API_KEY: str = Field(..., repr=False)
-    GEMINI_MODEL: str = "gemini-3.8-flash"
+    GEMINI_MODEL: str = "gemini-flash-lite-latest"
     GEMINI_EMBEDDING_MODEL: str = "gemini-embedding-2-preview"
     QDRANT_URL: str
     QDRANT_API_KEY: str = Field(..., repr=False)
